@@ -1,586 +1,418 @@
-import html
-import os
-import tempfile
+import sys
 from pathlib import Path
 
-import requests
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import streamlit as st
 
-from dotenv import load_dotenv
+from backend.services.document_service import generate_document
 
-from backend.services.document_service import (
-    make_docx,
-    make_pdf,
-    make_txt
-)
-
-
-load_dotenv()
-
-
-# ---------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------
-
-BACKEND_URL = os.getenv(
-    "BACKEND_URL",
-    "http://127.0.0.1:8000"
-).rstrip("/")
-
-
-REQUEST_TIMEOUT = int(
-    os.getenv(
-        "REQUEST_TIMEOUT_SECONDS",
-        "120"
-    )
-)
-
-
-# ---------------------------------------------------------
-# Streamlit configuration
-# ---------------------------------------------------------
 
 st.set_page_config(
-    page_title="LegalEase",
+    page_title="LegalEase AI",
     page_icon="⚖️",
-    layout="wide"
+    layout="wide",
 )
 
-
-# ---------------------------------------------------------
-# Custom CSS
-# ---------------------------------------------------------
 
 st.markdown(
     """
     <style>
-
-    .hero {
-        padding: 1.6rem 1.8rem;
-        border-radius: 18px;
-        background:
-            linear-gradient(
-                135deg,
-                #111827,
-                #1f2937
-            );
-        color: white;
-        margin-bottom: 1.5rem;
+    .main-title {
+        font-size: 42px;
+        font-weight: 700;
+        color: #1f2937;
+        margin-bottom: 0;
     }
 
-    .hero h1 {
-        margin: 0;
-        font-size: 2.4rem;
+    .subtitle {
+        font-size: 18px;
+        color: #6b7280;
+        margin-bottom: 25px;
     }
 
-    .hero p {
-        margin-top: 0.4rem;
-        color: #d1d5db;
-        font-size: 1.05rem;
-    }
-
-    .preview-box {
-        background: #111827;
-        color: #f9fafb;
-        padding: 1.5rem;
-        border-radius: 15px;
-        min-height: 500px;
-        max-height: 700px;
-        overflow-y: auto;
-        white-space: pre-wrap;
-        font-family: Georgia, serif;
-        line-height: 1.7;
-        font-size: 15px;
-    }
-
-    .legal-notice {
-        padding: 1rem;
-        margin-top: 1rem;
-        border-left: 5px solid #64748b;
-        background: #f8fafc;
+    .warning-box {
+        background-color: #fff7ed;
+        border: 1px solid #fed7aa;
+        padding: 15px;
         border-radius: 8px;
-        color: #334155;
+        color: #9a3412;
+        margin-bottom: 20px;
     }
 
+    .document-box {
+        background-color: #ffffff;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 25px;
+        line-height: 1.7;
+        font-family: Georgia, "Times New Roman", serif;
+        white-space: pre-wrap;
+    }
+
+    .footer {
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 1px solid #e5e7eb;
+        text-align: center;
+        color: #6b7280;
+        font-size: 13px;
+    }
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
-# ---------------------------------------------------------
-# Header
-# ---------------------------------------------------------
+st.markdown(
+    '<div class="main-title">⚖️ LegalEase AI</div>',
+    unsafe_allow_html=True,
+)
 
 st.markdown(
     """
-    <div class="hero">
-
-        <h1>⚖️ LegalEase</h1>
-
-        <p>
-            AI-assisted legal document drafting,
-            editing and export.
-        </p>
-
+    <div class="subtitle">
+        AI-Powered Legal Document Generator
     </div>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
-# ---------------------------------------------------------
-# Session state
-# ---------------------------------------------------------
+st.markdown(
+    """
+    <div class="warning-box">
+        <strong>Important:</strong>
+        LegalEase AI generates first-draft legal documents for
+        informational and drafting purposes only. It does not
+        provide legal advice. Please have the generated document
+        reviewed by a qualified legal professional before use.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-if "document" not in st.session_state:
-
-    st.session_state.document = ""
-
-
-if "document_type" not in st.session_state:
-
-    st.session_state.document_type = (
-        "Legal Document"
-    )
-
-
-if "brand_name" not in st.session_state:
-
-    st.session_state.brand_name = None
-
-
-# ---------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------
 
 with st.sidebar:
 
-    st.header("📄 Document Details")
+    st.header("Document Settings")
 
     document_type = st.selectbox(
         "Document Type",
         [
-            "Employment Contract",
-            "Non-Disclosure Agreement (NDA)",
-            "Lease Agreement",
-            "Freelance Work Contract",
+            "Non-Disclosure Agreement",
+            "Employment Agreement",
             "Service Agreement",
-            "Employment Offer Letter",
-            "General Agreement",
-            "Custom"
-        ]
+            "Consulting Agreement",
+            "Freelance Agreement",
+            "Rental Agreement",
+            "Partnership Agreement",
+            "Privacy Policy",
+            "Terms and Conditions",
+            "Other",
+        ],
     )
-
-
-    if document_type == "Custom":
-
-        document_type = st.text_input(
-            "Custom Document Type",
-            placeholder="Consulting Agreement"
-        )
-
-
-    parties = st.text_area(
-        "Parties Involved",
-        placeholder=(
-            "Jane Doe (Service Provider), "
-            "TechNova Inc. (Client)"
-        ),
-        height=120
-    )
-
-
-    terms = st.text_area(
-        "Terms & Conditions",
-        placeholder=(
-            "Payment within 30 days;\n"
-            "Confidentiality must be maintained;\n"
-            "Either party may terminate with 15 days notice"
-        ),
-        height=180,
-        help=(
-            "Enter one term per line or separate "
-            "terms using semicolons."
-        )
-    )
-
-
-    effective_date = st.text_input(
-        "Effective Date",
-        placeholder="October 1, 2026"
-    )
-
 
     brand_name = st.text_input(
-        "Company / Brand Name",
-        placeholder="TechNova Inc."
+        "Brand / Organization",
+        placeholder="Example: ABC Technologies",
+    )
+
+    st.markdown("---")
+
+    st.write(
+        "Select the type of legal document you want to generate."
     )
 
 
-    logo = st.file_uploader(
-        "Upload Logo (Optional)",
-        type=[
-            "png",
-            "jpg",
-            "jpeg"
-        ]
+st.header("Create Your Legal Document")
+
+col1, col2 = st.columns(2)
+
+
+with col1:
+
+    st.subheader("Parties")
+
+    parties = st.text_area(
+        "Enter the parties involved",
+        placeholder=(
+            "Example:\n"
+            "Party A: [INSERT NAME]\n"
+            "Party B: [INSERT NAME]"
+        ),
+        height=180,
     )
 
 
-    generate_button = st.button(
-        "✨ Generate Document",
-        type="primary",
-        use_container_width=True
+with col2:
+
+    st.subheader("Effective Date")
+
+    effective_date = st.text_input(
+        "Enter effective date",
+        placeholder="Example: [INSERT EFFECTIVE DATE]",
     )
 
 
-# ---------------------------------------------------------
-# Generate document
-# ---------------------------------------------------------
+st.subheader("Terms and Conditions")
+
+terms = st.text_area(
+    "Describe the requirements of the document",
+    placeholder=(
+        "Enter the terms, conditions, obligations, "
+        "payment details, confidentiality requirements, "
+        "termination conditions, and other information."
+    ),
+    height=250,
+)
+
+
+st.markdown("---")
+
+
+generate_button = st.button(
+    "⚖️ Generate Legal Document",
+    type="primary",
+    use_container_width=True,
+)
+
 
 if generate_button:
 
-    missing_fields = []
-
-
-    if not document_type.strip():
-
-        missing_fields.append(
-            "document type"
-        )
-
-
     if not parties.strip():
 
-        missing_fields.append(
-            "parties"
+        st.error(
+            "Please enter the parties involved."
         )
 
-
-    if not terms.strip():
-
-        missing_fields.append(
-            "terms"
-        )
-
-
-    if not effective_date.strip():
-
-        missing_fields.append(
-            "effective date"
-        )
-
-
-    if missing_fields:
+    elif not effective_date.strip():
 
         st.error(
-            "Please provide: "
-            + ", ".join(missing_fields)
-            + "."
+            "Please enter the effective date."
+        )
+
+    elif not terms.strip():
+
+        st.error(
+            "Please enter the terms and conditions."
         )
 
     else:
 
-        payload = {
+        with st.spinner(
+            "Generating your legal document..."
+        ):
 
-            "document_type":
-                document_type,
+            try:
 
-            "parties":
-                parties,
+                generated_document = generate_document(
+                    document_type=document_type,
+                    parties=parties,
+                    terms=terms,
+                    effective_date=effective_date,
+                    brand_name=brand_name or None,
+                )
 
-            "terms":
-                terms,
+                if not generated_document:
+                    raise RuntimeError(
+                        "The AI returned an empty response."
+                    )
 
-            "effective_date":
-                effective_date,
+                st.session_state[
+                    "generated_document"
+                ] = generated_document
 
-            "brand_name":
-                brand_name or None
-        }
+                st.success(
+                    "Document generated successfully."
+                )
 
+            except Exception as error:
+
+                st.error(
+                    "Document generation failed."
+                )
+
+                st.exception(error)
+
+
+generated_document = st.session_state.get(
+    "generated_document"
+)
+
+
+if generated_document:
+
+    st.markdown("---")
+
+    st.header("Document Preview")
+
+    safe_document = (
+        generated_document
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\n", "<br>")
+    )
+
+    st.markdown(
+        '<div class="document-box">'
+        + safe_document
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+    st.markdown("---")
+
+    st.subheader("Download Document")
+
+    download_col1, download_col2, download_col3 = st.columns(3)
+
+
+    with download_col1:
+
+        txt_data = generated_document.encode(
+            "utf-8"
+        )
+
+        st.download_button(
+            label="⬇️ Download TXT",
+            data=txt_data,
+            file_name="legal_document.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+
+
+    with download_col2:
 
         try:
 
-            with st.spinner(
-                "🤖 Generating document with Gemini..."
-            ):
+            from io import BytesIO
+            from docx import Document
 
-                response = requests.post(
-                    f"{BACKEND_URL}/generate",
-                    json=payload,
-                    timeout=REQUEST_TIMEOUT
-                )
+            docx_document = Document()
 
+            for paragraph in generated_document.split("\n"):
+                docx_document.add_paragraph(paragraph)
 
-            if response.ok:
+            docx_buffer = BytesIO()
 
-                data = response.json()
+            docx_document.save(docx_buffer)
 
+            docx_buffer.seek(0)
 
-                st.session_state.document = (
-                    data["content"]
-                )
+            st.download_button(
+                label="⬇️ Download DOCX",
+                data=docx_buffer.getvalue(),
+                file_name="legal_document.docx",
+                mime=(
+                    "application/vnd.openxmlformats-"
+                    "officedocument.wordprocessingml.document"
+                ),
+                use_container_width=True,
+            )
 
-
-                st.session_state.document_type = (
-                    data["document_type"]
-                )
-
-
-                st.session_state.brand_name = (
-                    brand_name or None
-                )
-
-
-                st.success(
-                    "Document generated successfully. "
-                    "Please review it carefully."
-                )
-
-
-            else:
-
-                try:
-
-                    detail = response.json().get(
-                        "detail",
-                        response.text
-                    )
-
-                except Exception:
-
-                    detail = response.text
-
-
-                st.error(
-                    f"Backend error "
-                    f"({response.status_code}): "
-                    f"{detail}"
-                )
-
-
-        except requests.RequestException as error:
+        except Exception as error:
 
             st.error(
-                "Could not connect to the FastAPI backend.\n\n"
-                f"Backend URL: {BACKEND_URL}\n\n"
-                f"Error: {error}"
+                f"DOCX generation failed: {error}"
             )
 
 
-# ---------------------------------------------------------
-# Preview
-# ---------------------------------------------------------
+    with download_col3:
 
-st.subheader("📑 Document Preview")
+        try:
 
+            from io import BytesIO
 
-if st.session_state.document:
+            from reportlab.lib.pagesizes import A4
 
-    preview_column, edit_column = st.columns(
-        [3, 1]
-    )
-
-
-    # -----------------------------------------------------
-    # Preview
-    # -----------------------------------------------------
-
-    with preview_column:
-
-        safe_document = html.escape(
-            st.session_state.document
-        )
-
-
-        st.markdown(
-            f"""
-            <div class="preview-box">
-                {safe_document}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-
-    # -----------------------------------------------------
-    # Editor
-    # -----------------------------------------------------
-
-    with edit_column:
-
-        st.markdown("### ✏️ Edit")
-
-        edited_document = st.text_area(
-            "Edit document",
-            value=st.session_state.document,
-            height=500,
-            label_visibility="collapsed"
-        )
-
-
-        if st.button(
-            "Apply Changes",
-            use_container_width=True
-        ):
-
-            st.session_state.document = (
-                edited_document
+            from reportlab.platypus import (
+                SimpleDocTemplate,
+                Paragraph,
+                Spacer,
             )
 
-            st.rerun()
+            from reportlab.lib.styles import (
+                getSampleStyleSheet,
+            )
 
+            pdf_buffer = BytesIO()
 
-    # -----------------------------------------------------
-    # Legal notice
-    # -----------------------------------------------------
+            pdf = SimpleDocTemplate(
+                pdf_buffer,
+                pagesize=A4,
+                rightMargin=45,
+                leftMargin=45,
+                topMargin=45,
+                bottomMargin=45,
+            )
 
-    st.markdown(
-        """
-        <div class="legal-notice">
+            styles = getSampleStyleSheet()
 
-        <strong>AI Draft Notice</strong><br>
+            story = []
 
-        This document was generated with AI assistance.
-        It is not legal advice and should be reviewed by
-        a qualified legal professional before signing or
-        relying upon it.
+            for line in generated_document.split("\n"):
 
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+                if line.strip():
 
+                    safe_line = (
+                        line
+                        .replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                    )
 
-    # -----------------------------------------------------
-    # Downloads
-    # -----------------------------------------------------
+                    story.append(
+                        Paragraph(
+                            safe_line,
+                            styles["BodyText"],
+                        )
+                    )
 
-    st.subheader("⬇️ Download")
+                    story.append(
+                        Spacer(1, 8)
+                    )
 
+                else:
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+                    story.append(
+                        Spacer(1, 10)
+                    )
 
-        logo_path = None
+            pdf.build(story)
 
+            pdf_buffer.seek(0)
 
-        if logo is not None:
+            st.download_button(
+                label="⬇️ Download PDF",
+                data=pdf_buffer.getvalue(),
+                file_name="legal_document.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
-            extension = (
-                Path(logo.name).suffix.lower()
-                or ".png"
+        except Exception as error:
+
+            st.error(
+                f"PDF generation failed: {error}"
             )
 
 
-            logo_path = os.path.join(
-                temp_dir,
-                f"logo{extension}"
-            )
-
-
-            with open(
-                logo_path,
-                "wb"
-            ) as file:
-
-                file.write(
-                    logo.getbuffer()
-                )
-
-
-        txt_file = make_txt(
-            st.session_state.document
-        )
-
-
-        docx_file = make_docx(
-            text=st.session_state.document,
-            doc_type=st.session_state.document_type,
-            brand_name=st.session_state.brand_name,
-            logo_path=logo_path,
-            terms=terms
-        )
-
-
-        pdf_file = make_pdf(
-            text=st.session_state.document,
-            doc_type=st.session_state.document_type,
-            brand_name=st.session_state.brand_name,
-            logo_path=logo_path
-        )
-
-
-    # -----------------------------------------------------
-    # Filename
-    # -----------------------------------------------------
-
-    filename = "".join(
-
-        character.lower()
-        if character.isalnum()
-        else "_"
-
-        for character
-        in st.session_state.document_type
-    )
-
-
-    filename = (
-        filename.strip("_")
-        or "legal_document"
-    )
-
-
-    # -----------------------------------------------------
-    # Download buttons
-    # -----------------------------------------------------
-
-    download_txt, download_docx, download_pdf = (
-        st.columns(3)
-    )
-
-
-    with download_txt:
-
-        st.download_button(
-            "⬇️ Download TXT",
-            data=txt_file,
-            file_name=f"{filename}.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
-
-
-    with download_docx:
-
-        st.download_button(
-            "⬇️ Download DOCX",
-            data=docx_file,
-            file_name=f"{filename}.docx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument."
-                "wordprocessingml.document"
-            ),
-            use_container_width=True
-        )
-
-
-    with download_pdf:
-
-        st.download_button(
-            "⬇️ Download PDF",
-            data=pdf_file,
-            file_name=f"{filename}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
-
-
-else:
-
-    st.info(
-        "Enter your document information in the "
-        "left sidebar and click **Generate Document**."
-    )
+st.markdown(
+    """
+    <div class="footer">
+        <strong>LegalEase AI</strong><br>
+        AI-assisted legal document drafting tool.<br><br>
+        This application does not provide legal advice.
+        Generated documents should be reviewed by a qualified
+        legal professional before use.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
